@@ -1,0 +1,82 @@
+---
+title: "Final_project"
+author: "Enci Fang"
+output:
+  html_document:
+    df_print: paged
+---
+
+## First, read the two csv files.
+```{r}
+airline_review <- read.csv('https://raw.githubusercontent.com/quankiquanki/skytrax-reviews-dataset/master/data/airline.csv')
+```  
+
+```{r}
+airline_safety <- read.csv('/home/rstudio/decal/final_project/airline-safety.csv')
+```
+
+## Here, my goal is to find out the relationship between airline safety degree and the corresponding airline reviews. Since these are totally different datasets and airline-review.csv contains the reviews about other airlines that don't exist in the airline-safety.csv, I need to screen out the required ones at first.
+```{r}
+head(airline_safety)
+head(airline_review)
+```
+
+```{r}
+library(fuzzyjoin)
+library(dplyr)
+library(magrittr)
+library(stringr)
+```
+## After making some string transformations, I use the fuzzyjoin package to find the most matching pair names of airlines based on the principle that the lower distance the more fitting, which in most cases match perfectly.
+```{r}
+airline_safety$airline <- str_replace_all(string=tolower(airline_safety$airline), pattern="\\*", repl="")
+required_airlines <- data.frame(name = airline_safety$airline)
+airline_review$airline_name <- str_replace_all(string=tolower(airline_review$airline_name), pattern="-", repl=" ")
+reviews_airlines <- data.frame(name = airline_review$airline_name)
+```
+
+```{r}
+result <- stringdist_join(required_airlines,reviews_airlines,
+                          by='name',
+                          mode = 'left',
+                          ignore_case = FALSE,
+                          method = 'jw',
+                          p=.15,
+                          max_dist = 4,
+                          distance_col = 'dist')
+
+result <- filter(group_by(distinct(group_by(result,name.y)),name.x),dist == min(dist) & dist != 1.0)
+`%notin%` <- Negate(`%in%`)
+names(result) <- c('name_in_safety','name_in_review','dist')
+result$name_in_safety <- as.character(result$name_in_safety)
+result$name_in_review <- as.character(result$name_in_review)
+result
+```  
+## However, there still exists some pairs not completely matching, thus needed to be replaced by one of the patterns.Here, I choose to replace the name in airline_safety with the one in airline_review.
+```{r}
+not_match <- result[result$dist!=0,]
+not_match
+for (i in 1:nrow(not_match)){
+  change_item = airline_safety$airline[airline_safety$airline == not_match[[i,1]]]
+  airline_safety$airline[airline_safety$airline == not_match[[i,1]]] = str_replace(change_item,change_item,not_match[[i,2]])
+}
+```  
+
+## Since the data is based on the flight from 1988 to 2015,  I can now filter the review data into the ones with the specific time period as well as the required corresponding airlines.
+```{r}
+airline_review$year <- as.numeric(substring(as.data.frame.POSIXct(x = airline_review$date)[,1],1,4))
+airline_review <- airline_review[airline_review$airline_name %in% airline_safety$airline & airline_review$year < 2015 & airline_review$year > 1988,]
+```  
+
+## By looking at the summary of the newly-produced airline_review, it's obviuos that there are plenty of missing values in the column `ground_service_rating` and `wifi_connectivity_rating`.Therefore, I removed the two columns to clean the data, not to make it superfluous. And finally, I got my two cleaned datasets.
+```{r}
+nrow(airline_review)
+summary(airline_review)
+```
+```{r}
+airline_review$wifi_connectivity_rating = NULL
+airline_review$ground_service_rating = NULL
+row.names(airline_review) <- 1:nrow(airline_review)
+head(airline_review)
+head(airline_safety)
+```
