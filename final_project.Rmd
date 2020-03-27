@@ -1,18 +1,16 @@
 ---
-title: "Final_project"
-author: "Enci Fang"
-output:
-  html_document:
-    df_print: paged
+title: "Data cleaning"
+author: "Enci"
+date: "2020/2/29"
+output: pdf_document
 ---
-
 ## First, read the two csv files.
 ```{r}
 airline_review <- read.csv('https://raw.githubusercontent.com/quankiquanki/skytrax-reviews-dataset/master/data/airline.csv')
 ```  
 
 ```{r}
-airline_safety <- read.csv('/home/rstudio/decal/final_project/airline-safety.csv')
+airline_safety <- read.csv('/Users/fawn/Desktop/decal/airline-safety.csv')
 ```
 
 ## Here, my goal is to find out the relationship between airline safety degree and the corresponding airline reviews. Since these are totally different datasets and airline-review.csv contains the reviews about other airlines that don't exist in the airline-safety.csv, I need to screen out the required ones at first.
@@ -68,15 +66,85 @@ airline_review$year <- as.numeric(substring(as.data.frame.POSIXct(x = airline_re
 airline_review <- airline_review[airline_review$airline_name %in% airline_safety$airline & airline_review$year < 2015 & airline_review$year > 1988,]
 ```  
 
-## By looking at the summary of the newly-produced airline_review, it's obviuos that there are plenty of missing values in the column `ground_service_rating` and `wifi_connectivity_rating`.Therefore, I removed the two columns to clean the data, not to make it superfluous. And finally, I got my two cleaned datasets.
+## By looking at the summary of the newly-produced airline_review, it's obvious that there are plenty of missing values in the column `ground_service_rating` and `wifi_connectivity_rating`.Therefore, I removed the two columns to clean the data, not to make it superfluous. And finally, I got my two cleaned datasets.
 ```{r}
 nrow(airline_review)
 summary(airline_review)
 ```
+
 ```{r}
 airline_review$wifi_connectivity_rating = NULL
 airline_review$ground_service_rating = NULL
 row.names(airline_review) <- 1:nrow(airline_review)
 head(airline_review)
 head(airline_safety)
+```  
+```{r}
+airline_safety$incident_rate_85_99 <- airline_safety$incidents_85_99 / sum(airline_safety$incidents_85_99)
+airline_safety$fatal_acd_rate_85_99 <- airline_safety$fatal_accidents_85_99 / airline_safety$incidents_85_99
+airline_safety$incident_rate_00_14 <- airline_safety$incidents_00_14 / sum(airline_safety$incidents_00_14)
+airline_safety$fatal_acd_rate_00_14 <- airline_safety$fatal_accidents_00_14 / airline_safety$incidents_00_14
+```  
+
+## Now let's explore some intuitive thoughts in airline_safety datasets. Our goal is to calculate the safety score for each airline.  
+## First, let's see whether the fatalities are predictable to some extent.
+```{r}
+fatalities.mod <- lm(fatalities_00_14~fatalities_85_99,data = airline_safety)
+plot(airline_safety$fatalities_85_99,airline_safety$fatalities_00_14, 
+     xlab = 'fatality_85_99' , ylab = 'fatality_00_14',
+     main = 'The relationship between fatalities of two periods')
+text(airline_safety$fatalities_85_99[which(airline_safety$fatalities_00_14 > 100)], airline_safety$fatalities_00_14[which(airline_safety$fatalities_00_14 > 100)], 
+   labels=airline_safety$airline[which(airline_safety$fatalities_00_14 > 100)])
+abline(fatalities.mod$coefficients[1],fatalities.mod$coefficients[2],col = 'red')
 ```
+## It seems that there is hardly any correlation between fatalities of two time periods. An airline once having great fatalities is not necessarily likely to cause great fatalities in the future. For example, the outlier kenya airways shows that there is no fatalities from 85 to 99 but 283. Nothing predictable can we conclude from the fatalities. We can theoretically say that there is no need for us to never fly the airlines that have had crashed before.
+```{r}
+select(filter(airline_safety,airline_safety$airline == 'kenya airways'),airline,fatalities_85_99,fatalities_00_14)
+```  
+## What if we look from the perspective of the incidents?
+```{r}
+incident.mod <- lm(incidents_00_14~incidents_85_99, data = airline_safety)
+plot(airline_safety$incidents_85_99,airline_safety$incidents_00_14, 
+     xlab = 'incidents_85_99' , ylab = 'incidents_00_14',
+     main = 'The relationship between incidents of two periods',
+     xlim=c(0,30),
+     ylim = c(0,30))
+abline(incident.mod$coefficients[1],incident.mod$coefficients[2],col = 'red')
+```  
+## Better than the previuos one, there is a slight correlation between the incidents from two periods - some airlines are slightly safer to fly than others. In particular, we should look toward an airline’s rate of dangerous incidents of any kind rather than its number of fatalities or fatal accidents. They are more consistent from period to period and could result in a deadly crash the next time around. 
+##############################  
+
+## Now let's use some strategies to evaluate the safety for each airline.  
+- Subtract an airline’s crash rate from the average for all airlines. This gives safer airlines positive scores and less safe airlines negative scores.  
+- Multiply the result by the square root of avail_seat_km_per_week. This gives more credit to an airline that has achieved a strong safety record over a larger sample of flights.  
+- Standardize the score in each category to calculate how many standard deviations an airline is above or below the mean. Then average the scores from the two categories together. This is the safety score. And finally take the airlines scored bigger than 0 as safer ones.
+```{r}
+credit_incidents1 <- (mean(airline_safety$incident_rate_85_99) - airline_safety$incident_rate_85_99) * sqrt(airline_safety$avail_seat_km_per_week)
+score1 <- (credit_incidents1 -mean(credit_incidents1))/ sd(credit_incidents1)
+
+credit_fatality1 <- (mean(airline_safety$fatalities_85_99) - airline_safety$fatalities_85_99) * sqrt(airline_safety$avail_seat_km_per_week)
+score2 <- (credit_fatality1 -mean(credit_fatality1))/ sd(credit_fatality1)
+
+credit_fatal_acd1 <- (mean(airline_safety$fatal_accidents_85_99) - airline_safety$fatal_accidents_85_99) * sqrt(airline_safety$avail_seat_km_per_week)
+score3 <- (credit_fatal_acd1 -mean(credit_fatal_acd1))/ sd(credit_fatal_acd1)
+
+credit_all_85_99 <- (score1 + score2 + score3) / 3
+airline_safety$credit_all_85_99 <- credit_all_85_99
+
+credit_incidents2 <- (mean(airline_safety$incident_rate_00_14) - airline_safety$incident_rate_00_14) * sqrt(airline_safety$avail_seat_km_per_week)
+score4 <- (credit_incidents2 -mean(credit_incidents2))/ sd(credit_incidents2)
+
+credit_fatality2 <- (mean(airline_safety$fatalities_00_14) - airline_safety$fatalities_00_14) * sqrt(airline_safety$avail_seat_km_per_week)
+score5 <- (credit_fatality2 -mean(credit_fatality2))/ sd(credit_fatality2)
+
+credit_fatal_acd2 <- (mean(airline_safety$fatal_accidents_00_14) - airline_safety$fatal_accidents_00_14) * sqrt(airline_safety$avail_seat_km_per_week)
+score6 <- (credit_fatal_acd2 -mean(credit_fatal_acd2))/ sd(credit_fatal_acd2)
+
+credit_all_00_14 <- (score4 + score5 + score6) / 3
+airline_safety$credit_all_00_14 <- credit_all_00_14
+
+airline_safety$safety_score <- (credit_all_85_99 + credit_all_00_14)/2
+head(select(arrange(airline_safety,desc(safety_score)),airline,safety_score),10)
+```  
+## Now we have calculated the safety score for each airline. We can see that cathay pacific airways, lufthansa, southwest airlines, british airways,air canada,qantaslink rank the first six safe airlines. This shouldn’t be surprising. Richer countries, in air travel and many other aspects of public planning, generally can afford to buy more safety in the form of higher prices and more expensive regulations. Those airlines are subject to extremely stringent safety standards, and the same standards are applied to all airlines from the same country or region. 
+
